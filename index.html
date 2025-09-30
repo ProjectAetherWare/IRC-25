@@ -5,18 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IRC v0.88 - Internet Relay Chat (1988 Edition)</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Use a retro terminal font -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
 
-        /* The core 1988 CRT look - now full screen */
         .crt-screen {
             font-family: 'VT323', monospace;
             background-color: #000000;
-            color: #ffffff; /* Default text color is white/off-white for message body */
+            color: #ffffff;
             text-shadow: 0 0 5px rgba(255, 255, 255, 0.4);
-            height: 100vh; /* Full viewport height */
-            width: 100vw; /* Full viewport width */
+            height: 100vh;
+            width: 100vw;
             margin: 0;
             display: flex;
             flex-direction: column;
@@ -25,66 +23,57 @@
             overflow: hidden;
         }
         
-        /* Ensure body also has no margin/padding */
         body {
             padding: 0;
             margin: 0;
             background-color: #000;
         }
 
-        /* Disable modern styles like rounded corners */
         * {
             border-radius: 0 !important;
         }
 
-        /* Message types for color-coding */
-        .msg-user { color: #ffffff; } /* Regular user message text */
-        .msg-action { color: #ff00ff; } /* Pink/Magenta for /me actions */
-        .msg-system { color: #00ffff; } /* Cyan for system messages (joins/parts) */
-        .msg-error { color: #ff0000; } /* Red for errors */
-        .msg-warning { color: #ffff00; } /* Yellow for warnings */
-        .msg-friend { color: #00ff00; } /* Bright Green for friend-related system messages */
+        .msg-user { color: #ffffff; }
+        .msg-action { color: #ff00ff; }
+        .msg-system { color: #00ffff; }
+        .msg-error { color: #ff0000; }
+        .msg-warning { color: #ffff00; }
+        .msg-friend { color: #00ff00; }
 
-        /* Nick Colors (for persistent coloring based on user ID) */
-        .nick-color-1 { color: #00ff00; } /* Bright Green */
-        .nick-color-2 { color: #ff00ff; } /* Magenta */
-        .nick-color-3 { color: #00ffff; } /* Cyan */
-        .nick-color-4 { color: #ffff00; } /* Yellow */
-        .nick-color-5 { color: #ff8800; } /* Orange */
-        .nick-color-6 { color: #ffffff; } /* Pure White */
-        .nick-color-7 { color: #aaffaa; } /* Light Green */
-        .nick-color-8 { color: #ffaa00; } /* Gold */
+        .nick-color-1 { color: #00ff00; }
+        .nick-color-2 { color: #ff00ff; }
+        .nick-color-3 { color: #00ffff; }
+        .nick-color-4 { color: #ffff00; }
+        .nick-color-5 { color: #ff8800; }
+        .nick-color-6 { color: #ffffff; }
+        .nick-color-7 { color: #aaffaa; }
+        .nick-color-8 { color: #ffaa00; }
 
-        /* Nick styling for clickability */
         .clickable-nick {
             cursor: pointer;
             text-decoration: underline;
         }
 
-        /* Input field styling to look like a prompt (now just a text field) */
         #input-prompt {
             background-color: transparent;
             border: none;
-            color: #ffffff; /* Input text is white */
+            color: #ffffff;
             outline: none;
             padding: 0;
             flex-grow: 1;
         }
 
-        /* Status bar style */
         #status-bar {
             background-color: #000;
             border-top: 2px solid #00ff00;
             padding: 0 0.5rem;
         }
         
-        /* The input line that precedes the input text */
         #input-prefix {
             color: #00ff00;
             margin-right: 0.5rem;
         }
         
-        /* Scrollbar styling (best effort for terminal look) */
         .terminal-scroll::-webkit-scrollbar {
             width: 8px;
             height: 8px;
@@ -99,7 +88,6 @@
             background-color: #000;
         }
         
-        /* Modal Backdrop */
         .modal-backdrop {
             position: absolute;
             top: 0;
@@ -113,7 +101,6 @@
             z-index: 100;
         }
         
-        /* Modal Content - Retro Box */
         .modal-content {
             background-color: #000;
             border: 2px solid #00ff00;
@@ -121,67 +108,64 @@
             box-shadow: 0 0 10px #00ff00;
             max-width: 400px;
             width: 90%;
-            font-size: 0.875rem; /* sm text */
+            font-size: 0.875rem;
         }
     </style>
     
-    <!-- Firebase SDK Imports -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        // NOTE: Added GoogleAuthProvider, signInWithPopup, getDoc, signOut
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, query, where, addDoc, orderBy, setLogLevel, getDocs, deleteDoc, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global vars for Firebase and application state
         let app;
         let db;
         let auth;
         let currentUserId = 'unknown';
         let currentNick = '';
-        let currentChannel = ''; // Dynamic channel state
-        let customNickColorClass = ''; // User's chosen color class (NEW)
+        let currentChannel = '';
+        let customNickColorClass = '';
         
-        // Local state for friends/users
-        let nickToIdMap = {}; // Maps {userId: {nick: string, color: string, channel: string}} (UPDATED)
+        let nickToIdMap = {};
         let friendNicks = [];
-        let pendingRequests = []; // Stores {id, nick, docId}
+        let pendingRequests = [];
         
-        // Unsubscribe functions for real-time listeners
         let messageUnsubscribe = null;
         let userUnsubscribe = null;
         let friendUnsubscribe = null;
         
         const DEFAULT_CHANNEL = "#GENERAL";
         const MAX_NICK_LENGTH = 15;
-        const NICK_TIMEOUT_MS = 60000; // 60 seconds for presence tracking
-        const ONE_DAY_MS = 86400000; // 24 hours for channel inactivity
+        const NICK_TIMEOUT_MS = 60000;
+        const ONE_DAY_MS = 86400000;
         
         const RETRO_NICK_COLORS = ['nick-color-1', 'nick-color-2', 'nick-color-3', 'nick-color-4', 'nick-color-5', 'nick-color-6', 'nick-color-7', 'nick-color-8'];
 
-        // BASIC SLUR/PROFANE FILTER LIST
         const CENSORED_WORDS = [
             "badword", "slur", "profanity", "swear", "testfilter" 
         ];
 
-
-        // Global variables are provided by the canvas environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-irc-app';
-        // Note: __firebase_config is a string, so we must parse it.
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        // --- START: Firebase Configuration (Provided by User) ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCvETDgNXGM8YY8lTp1PJcbeE9vPHBdfH8",
+            authDomain: "irc25m.firebaseapp.com",
+            projectId: "irc25m",
+            storageBucket: "irc25m.firebasestorage.app",
+            messagingSenderId: "407714149011",
+            appId: "1:407714149011:web:276edd445e5c1a03b29366",
+            measurementId: "G-58H16BXM67"
+        };
+        const appId = firebaseConfig.projectId; // Use projectId as the consistent app ID
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // --- END: Firebase Configuration (Provided by User) ---
 
-        // Utility functions
-        
-        /** Generates HH:MM:SS format */
         function getFormattedTime(timeMs) {
             const date = timeMs ? new Date(timeMs) : new Date();
             const pad = (n) => n < 10 ? '0' + n : n;
             return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
         }
         
-        /** Simple hashing function to assign a persistent color class to a user ID or nick */
-        function getNickColorClass(id, customColor) { // Added customColor parameter
-            if (customColor) return customColor; // Prioritize user's chosen color
+        function getNickColorClass(id, customColor) {
+            if (customColor) return customColor;
             if (!id) return RETRO_NICK_COLORS[0];
             let hash = 0;
             for (let i = 0; i < id.length; i++) {
@@ -191,11 +175,9 @@
             return RETRO_NICK_COLORS[index];
         }
 
-        /** Censors text based on the CENSORED_WORDS list. */
         function censorText(text) {
             let censored = text;
             CENSORED_WORDS.forEach(word => {
-                // Create a RegExp for global, case-insensitive replacement of the whole word
                 const regex = new RegExp(`\\b${word}\\b`, 'gi');
                 const mask = '*'.repeat(word.length);
                 censored = censored.replace(regex, mask);
@@ -206,11 +188,10 @@
         function logSystemMessage(message, type = 'system', channel = currentChannel) {
             const log = document.getElementById('chat-log');
             const time = getFormattedTime();
-            // Prefix message with channel if not the current channel
-            const channelPrefix = channel && channel !== currentChannel ? `[${channel}] ` : '';
+            const channelPrefix = channel && channel !== currentChannel ? `[${channel}]` : '';
             const messageHtml = `<div class="msg-${type} text-sm leading-tight"><span class="text-green-500">[${time}]</span> * ${channelPrefix}${message}</div>`;
             log.insertAdjacentHTML('beforeend', messageHtml);
-            log.scrollTop = log.scrollHeight; // Auto-scroll
+            log.scrollTop = log.scrollHeight;
         }
 
         function getTime() {
@@ -222,25 +203,58 @@
             return `Guest${rand}`;
         }
 
-        // --- CORE FIREBASE & AUTHENTICATION ---
-        
+        async function handleEmailSignUp(email, password) {
+            if (!auth) {
+                logSystemMessage("Authentication service not available.", 'error');
+                return;
+            }
+            try {
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                logSystemMessage(`Account created and signed in as ${userCredential.user.email}.`, 'system');
+                window.closeSettingsModal();
+            } catch (error) {
+                logSystemMessage(`Sign up failed: ${error.message}`, 'error');
+                console.error("Sign up failed:", error);
+            }
+        }
+
+        async function handleEmailSignIn(email, password) {
+            if (!auth) {
+                logSystemMessage("Authentication service not available.", 'error');
+                return;
+            }
+            try {
+                const userCredential = await signInWithEmailAndPassword(auth, email, password);
+                logSystemMessage(`Signed in as ${userCredential.user.email}.`, 'system');
+                window.closeSettingsModal();
+            } catch (error) {
+                logSystemMessage(`Sign in failed: ${error.message}`, 'error');
+                console.error("Sign in failed:", error);
+            }
+        }
+
         async function initializeUser(uid) {
             const userRef = getUserDocRef(uid);
-            // FIX: Use getDoc to fetch a single document from a document path
             const userDoc = await getDoc(userRef); 
             
             const userData = userDoc.exists() ? userDoc.data() : {};
             
             currentNick = userData.nick || generateRandomNick();
-            customNickColorClass = userData.customNickColor || ''; // Load custom color
+            customNickColorClass = userData.customNickColor || '';
 
             updateUserPresence(currentNick);
             joinChannel(DEFAULT_CHANNEL);
 
             friendUnsubscribe = listenForFriendsAndRequests();
             
-            // Update auth status text
-            document.getElementById('auth-status-text').textContent = auth.currentUser?.isAnonymous ? "Guest (Anonymous)" : auth.currentUser?.email || "Authenticated";
+            const authStatusText = document.getElementById('auth-status-text');
+            if (auth.currentUser) {
+                authStatusText.textContent = auth.currentUser.isAnonymous 
+                    ? "Guest (Anonymous)" 
+                    : auth.currentUser.email || "Authenticated";
+            } else {
+                 authStatusText.textContent = "Signed Out";
+            }
         }
 
         async function initFirebase() {
@@ -258,13 +272,12 @@
 
                 await new Promise((resolve, reject) => {
                     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-                        unsubscribe(); // Stop listening after the initial check
+                        unsubscribe();
                         if (user) {
                             currentUserId = user.uid;
                             await initializeUser(user.uid); 
                             resolve();
                         } else {
-                            // Initial sign-in logic (Anonymous/Custom Token)
                             try {
                                 if (initialAuthToken) {
                                     const cred = await signInWithCustomToken(auth, initialAuthToken);
@@ -296,16 +309,13 @@
             if (friendUnsubscribe) friendUnsubscribe();
             
             try {
-                // Sign out the current user
                 await signOut(auth);
                 
-                // Clear state (optional, onAuthStateChanged will trigger reload or re-auth)
                 currentUserId = 'unknown';
                 currentNick = 'Disconnected';
                 currentChannel = '';
                 customNickColorClass = '';
                 
-                // Clear UI
                 document.getElementById('chat-log').innerHTML = '';
                 document.getElementById('user-list').innerHTML = '';
                 document.getElementById('friend-list').innerHTML = '';
@@ -313,6 +323,7 @@
                 document.getElementById('channel-name').textContent = '*** DISCONNECTED ***';
                 document.getElementById('status-text').textContent = 'Signed Out';
                 document.getElementById('input-prefix-nick').textContent = '[SIGNED OUT]';
+                document.getElementById('auth-status-text').textContent = "Signed Out";
                 
                 logSystemMessage("You have been signed out. Please reload to sign in as a new guest.", 'system');
                 
@@ -324,11 +335,8 @@
         async function signInWithGoogle() {
             const provider = new GoogleAuthProvider();
             try {
-                // If the user is currently anonymous, we want to link the accounts, 
-                // but since the environment uses custom tokens, we just perform a fresh sign-in.
                 await signInWithPopup(auth, provider);
-                window.closeSettingsModal(); // Use global function
-                // onAuthStateChanged will handle the state change and call initializeUser
+                window.closeSettingsModal();
             } catch (error) {
                 if (error.code === 'auth/popup-closed-by-user') {
                     logSystemMessage("Google sign-in popup closed.", 'warning');
@@ -339,25 +347,19 @@
             }
         }
 
-        // --- FIRESTORE OPERATIONS & REFERENCES ---
-
         function getUserDocRef(uid) {
-            // Public data collection for presence/nicknames: /artifacts/{appId}/public/data/users/{userId}
             return doc(db, 'artifacts', appId, 'public', 'data', 'users', uid);
         }
 
         function getChannelDocRef(channelName) {
-            // Public data collection for channel metadata: /artifacts/{appId}/public/data/channels/{channelName}
             return doc(db, 'artifacts', appId, 'public', 'data', 'channels', channelName);
         }
 
         function getMessagesCollectionRef() {
-            // Public data collection for chat history: /artifacts/{appId}/public/data/messages
             return collection(db, 'artifacts', appId, 'public', 'data', 'messages');
         }
 
         function getFriendRequestsCollectionRef() {
-            // Public data collection for friend requests/relationships
             return collection(db, 'artifacts', appId, 'public', 'data', 'friendRequests');
         }
 
@@ -365,7 +367,6 @@
              if (!db || !channelName) return;
              const channelRef = getChannelDocRef(channelName);
              try {
-                // Creates channel if it doesn't exist, updates activity if it does
                  await setDoc(channelRef, {
                      channelName: channelName,
                      last_active: getTime(),
@@ -380,11 +381,10 @@
             
             const userRef = getUserDocRef(currentUserId);
             try {
-                // Presence update
                 await setDoc(userRef, {
                     userId: currentUserId,
                     nick: newNick,
-                    customNickColor: customNickColorClass, // Store custom color
+                    customNickColor: customNickColorClass,
                     channel: currentChannel,
                     last_active: getTime(), 
                 }, { merge: true });
@@ -416,12 +416,12 @@
                     customNickColor: newColor,
                 }, { merge: true });
 
-                customNickColorClass = newColor; // Update global state
+                customNickColorClass = newColor;
                 if (oldNick !== newNick) {
                     logSystemMessage(`*** ${oldNick} is now known as ${newNick}`, 'system');
                 }
-                updateUserPresence(newNick); // Trigger presence update in current channel
-                window.closeSettingsModal(); // Use global function
+                updateUserPresence(newNick);
+                window.closeSettingsModal();
 
             } catch (e) {
                 console.error("Error saving settings:", e);
@@ -436,7 +436,6 @@
                 return;
             }
             
-            // Censor the text before saving it to Firestore
             const censoredText = censorText(text);
 
             await updateUserPresence();
@@ -463,39 +462,29 @@
                 return;
             }
 
-            // 1. Send system PART message to old channel (if needed)
             if (currentChannel) {
                  logSystemMessage(`*** ${currentNick} has left ${currentChannel}`, 'system', currentChannel);
             }
             
-            // 2. Unsubscribe old listeners
             if (messageUnsubscribe) messageUnsubscribe();
             if (userUnsubscribe) userUnsubscribe();
             
-            // 3. Update state
             currentChannel = channelName;
             
-            // 4. Update UI
-            document.getElementById('chat-log').innerHTML = ''; // Clear chat log
+            document.getElementById('chat-log').innerHTML = '';
             document.getElementById('channel-name').textContent = currentChannel;
             document.getElementById('topic-content').textContent = `Now viewing channel ${currentChannel}.`;
             document.getElementById('input-prefix-nick').textContent = `${currentChannel} [${currentNick}]`;
             
-            // 5. Subscribe to new listeners
             messageUnsubscribe = listenForMessages(currentChannel);
             userUnsubscribe = listenForUsers(currentChannel);
             
-            // 6. Send system JOIN message & update presence
             updateUserPresence();
             updateChannelActivity(currentChannel);
             logSystemMessage(`*** ${currentNick} has joined ${currentChannel}`, 'system', currentChannel);
         }
 
-        // --- FRIEND MANAGEMENT LOGIC ---
-
-        /** Gets the user ID for a given nickname from the local map. */
         function getUserIdByNick(nick) {
-            // Search through the values of the local nickToIdMap
             for (const id in nickToIdMap) {
                 if (nickToIdMap[id].nick.toLowerCase() === nick.toLowerCase()) {
                     return id;
@@ -536,11 +525,10 @@
             const q2b = query(friendsRef, where('receiverId', '==', currentUserId), where('status', '==', 'accepted'));
             onSnapshot(q2b, acceptedFriendsListener);
 
-            // Listener for Pending Requests TO ME
             const q1 = query(friendsRef, where('receiverId', '==', currentUserId), where('status', '==', 'pending'));
             return onSnapshot(q1, (snapshot) => {
                 const requestList = document.getElementById('request-list');
-                pendingRequests = []; // Clear current list
+                pendingRequests = [];
 
                 snapshot.docs.forEach(doc => {
                     const data = doc.data();
@@ -561,12 +549,9 @@
         }
 
 
-        // --- REAL-TIME LISTENERS ---
-
         function listenForMessages(channel) {
             if (!db) return;
 
-            // Query to get messages for the specific channel, ordered by time
             const q = query(
                 getMessagesCollectionRef(), 
                 where('channel', '==', channel), 
@@ -576,7 +561,6 @@
             return onSnapshot(q, (snapshot) => {
                 const log = document.getElementById('chat-log');
                 
-                // Check for new messages/changes
                 snapshot.docChanges().forEach((change) => {
                     if (change.type === "added") {
                         const data = change.doc.data();
@@ -592,85 +576,72 @@
             if (!db) return;
 
             const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
-            // Show users active in the last 60 seconds AND currently in this channel
             const cutoff = getTime() - NICK_TIMEOUT_MS;
             
             const q = query(
                 usersRef, 
-                where('channel', '==', channel), // Filter by current channel
-                where('last_active', '>=', cutoff) // Filter by activity
+                where('channel', '==', channel),
+                where('last_active', '>=', cutoff)
             );
 
             return onSnapshot(q, (snapshot) => {
                 const userList = document.getElementById('user-list');
                 const activeUsers = [];
-                nickToIdMap = {}; // Reset local map
+                nickToIdMap = {};
 
                 snapshot.docs.forEach(doc => {
                     const data = doc.data();
-                    const finalColor = getNickColorClass(data.userId, data.customNickColor); // Use custom color
+                    const finalColor = getNickColorClass(data.userId, data.customNickColor);
                     activeUsers.push({ id: data.userId, nick: data.nick, colorClass: finalColor, channel: data.channel });
                     
-                    // Populate local map for profile lookup
                     nickToIdMap[data.userId] = { 
                         nick: data.nick, 
                         color: finalColor, 
                         channel: data.channel,
-                        isAnonymous: data.userId === auth.currentUser?.uid ? auth.currentUser.isAnonymous : undefined // Include auth type if logged in
+                        isAnonymous: data.userId === auth.currentUser?.uid ? auth.currentUser.isAnonymous : undefined
                     };
                 });
 
-                // Update the User List UI with colored, clickable nicks
                 userList.innerHTML = activeUsers
-                    .sort((a, b) => a.nick.toLowerCase().localeCompare(b.nick.toLowerCase()))
+                    .sort((a, b) => a.nick.toLowerCase().localeCompare(b.toLowerCase()))
                     .map(user => 
-                        // Added clickable-nick and data-user-id for click functionality
                         `<div><span class="${user.colorClass} clickable-nick" data-user-id="${user.id}">${user.nick}</span></div>`
                     ).join('');
                 
-                // Attach click handlers for opening profiles
                 document.querySelectorAll('#user-list .clickable-nick').forEach(span => {
-                    span.onclick = (e) => window.openProfileModal(e.target.dataset.userId); // Use global function
+                    span.onclick = (e) => window.openProfileModal(e.target.dataset.userId);
                 });
 
-                // Update the status bar text
                 const statusText = document.getElementById('status-text');
                 statusText.innerHTML = 
                     `<span class="text-white">1:${currentChannel}</span> <span class="text-green-500">(${activeUsers.length} users)</span>`;
             });
             
-            // Periodically update own presence to stay visible in the list
             setInterval(() => {
                 if (currentNick && currentChannel) {
                     updateUserPresence();
                 }
-            }, NICK_TIMEOUT_MS / 3); // Update every 20 seconds
+            }, NICK_TIMEOUT_MS / 3);
         }
 
-
-        // --- UI RENDERING & MODALS (FIXED/NEW) ---
 
         function renderMessage(data) {
             const log = document.getElementById('chat-log');
             const time = getFormattedTime(data.time);
             
-            // Look up color from the map, fall back to hash
             const userData = nickToIdMap[data.userId] || { color: getNickColorClass(data.userId) };
             const nickColorClass = userData.color;
             let messageHtml = '';
 
             if (data.type === 'message') {
-                // IRC format: [Time] Nick: Message
                 messageHtml = `<div class="msg-user text-sm leading-tight"><span class="text-green-500">[${time}]</span> <span class="${nickColorClass}">${data.nick}</span>: ${data.text}</div>`;
             } else if (data.type === 'action') {
-                // /me action format: [Time] * Nick Text
                 messageHtml = `<div class="msg-action text-sm leading-tight"><span class="text-green-500">[${time}]</span> * ${data.nick} ${data.text}</div>`;
             }
 
             log.insertAdjacentHTML('beforeend', messageHtml);
         }
         
-        // FIX: Attach to window to be callable from inline HTML onclick="openSettingsModal()"
         window.openSettingsModal = function() {
             document.getElementById('settings-nick-input').value = currentNick;
             
@@ -682,22 +653,18 @@
                         onclick="selectColor('${colorClass}')"></button>`
             ).join('');
             
-            document.getElementById('settings-selected-color').value = customNickColorClass; // Set initial selected color value
+            document.getElementById('settings-selected-color').value = customNickColorClass;
             
             document.getElementById('settings-modal').classList.remove('hidden');
         }
 
-        // FIX: Attach to window to be callable from inline HTML onclick="closeSettingsModal()"
         window.closeSettingsModal = function() {
             document.getElementById('settings-modal').classList.add('hidden');
         }
         
-        // Made global to be accessible from inline HTML onclick
         window.selectColor = function(colorClass) {
-            // Update UI selection feedback
             document.querySelectorAll('#settings-color-picker .color-option').forEach(btn => {
                 btn.classList.remove('border-4');
-                // Check against the dataset value (data-color-class)
                 if (btn.dataset.colorClass === colorClass) { 
                     btn.classList.add('border-4');
                 }
@@ -705,7 +672,6 @@
             document.getElementById('settings-selected-color').value = colorClass;
         }
 
-        // FIX: Attach to window to be callable from JS event listener and potentially others
         window.openProfileModal = function(userId) {
             const userData = nickToIdMap[userId];
             
@@ -726,13 +692,10 @@
             document.getElementById('profile-modal').classList.remove('hidden');
         }
 
-        // FIX: Attach to window to be callable from inline HTML onclick="closeProfileModal()"
         window.closeProfileModal = function() {
             document.getElementById('profile-modal').classList.add('hidden');
         }
 
-
-        // --- COMMAND HANDLER ---
 
         function handleCommand(input) {
             const parts = input.trim().split(/\s+/);
@@ -740,7 +703,7 @@
             const targetNick = parts[1] || '';
             const rest = parts.slice(1).join(' ').trim();
             
-            document.getElementById('input-prompt').value = ''; // Clear input field
+            document.getElementById('input-prompt').value = '';
 
             if (command.startsWith('/')) {
                 const cmd = command.substring(1);
@@ -826,7 +789,6 @@
                         break;
                 }
             } else {
-                // Regular message
                 if (input.trim().length > 0) {
                     sendMessage(input);
                 }
@@ -853,7 +815,6 @@
 
             try {
                 if (action === 'send') {
-                    // Check for existing relationship (pending or accepted)
                     const qCheck = query(friendsRef, 
                         where('status', 'in', ['pending', 'accepted']),
                         where('senderNick', 'in', [currentNick, targetNick]),
@@ -866,7 +827,6 @@
                         return;
                     }
 
-                    // Send new request
                     await addDoc(friendsRef, {
                         senderId: currentUserId,
                         receiverId: targetId,
@@ -878,7 +838,6 @@
                     logSystemMessage(`Friend request sent to ${targetNick}.`, 'msg-friend');
 
                 } else if (action === 'accept' || action === 'deny') {
-                    // Find the PENDING request where target is the SENDER and I am the RECEIVER
                     const q = query(friendsRef, 
                         where('senderId', '==', targetId), 
                         where('receiverId', '==', currentUserId), 
@@ -896,13 +855,12 @@
                     if (action === 'accept') {
                         await updateDoc(docRef, { status: 'accepted' });
                         logSystemMessage(`You are now friends with ${targetNick}!`, 'msg-friend');
-                    } else { // deny
+                    } else {
                         await deleteDoc(docRef);
                         logSystemMessage(`Request from ${targetNick} denied.`, 'msg-friend');
                     }
 
                 } else if (action === 'unfriend') {
-                    // Find the ACCEPTED relationship
                     const qA = query(friendsRef, where('senderId', '==', currentUserId), where('receiverId', '==', targetId), where('status', '==', 'accepted'));
                     const qB = query(friendsRef, where('senderId', '==', targetId), where('receiverId', '==', currentUserId), where('status', '==', 'accepted'));
 
@@ -923,10 +881,7 @@
         }
 
 
-        // --- INITIALIZATION ---
-
         window.onload = () => {
-            // Add event listener to the input field
             const inputPrompt = document.getElementById('input-prompt');
             inputPrompt.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') {
@@ -937,22 +892,32 @@
                 }
             });
             
-            // Event listener for the Settings Modal Save button
+            // Event listener for the SETTINGS button
+            document.getElementById('settings-btn').onclick = window.openSettingsModal;
+            
             document.getElementById('save-settings-btn').onclick = () => {
                 const newNick = document.getElementById('settings-nick-input').value;
-                // Get the selected color, defaulting to the current custom color if none is explicitly selected
                 const newColor = document.getElementById('settings-selected-color').value || customNickColorClass; 
                 saveUserSettings(newNick, newColor);
             };
             
-            // Event listener for Sign Out
             document.getElementById('sign-out-btn').onclick = handleSignOut;
             
-            // Event listener for Google Sign-in
             document.getElementById('google-sign-in-btn').onclick = signInWithGoogle;
+            
+            document.getElementById('email-sign-up-btn').onclick = () => {
+                const email = document.getElementById('settings-email-input').value;
+                const password = document.getElementById('settings-password-input').value;
+                handleEmailSignUp(email, password);
+            };
+
+            document.getElementById('email-sign-in-btn').onclick = () => {
+                const email = document.getElementById('settings-email-input').value;
+                const password = document.getElementById('settings-password-input').value;
+                handleEmailSignIn(email, password);
+            };
 
 
-            // Start Firebase setup
             initFirebase();
         };
 
@@ -962,15 +927,12 @@
 
     <div id="irc-app" class="crt-screen">
         
-        <!-- TOP Status Bar (Mimics Window Title/Info) -->
         <div class="w-full text-xs text-center border-b border-green-500 py-1 bg-gray-900 text-green-500">
             IRC v0.88 - Multi-Channel Client | Click a Nickname to view profile!
         </div>
         
-        <!-- Main Content Area (Chat + User List) -->
         <div class="flex flex-grow overflow-hidden text-sm">
             
-            <!-- Channel Info/Topic Area (Left Top) -->
             <div class="w-1/4 max-w-[200px] pl-1 pt-1 flex flex-col border-r border-green-500">
                  <div id="channel-name" class="text-sm font-bold pb-1 text-green-500 leading-tight">*** connecting ***</div>
                  <div class="text-xs text-white pb-1 leading-tight border-b border-green-500">TOPIC</div>
@@ -979,49 +941,36 @@
                  </div>
             </div>
 
-            <!-- Chat Log (Main Area) -->
             <div id="chat-log" class="terminal-scroll flex-grow overflow-y-auto px-1 pt-1 w-1/2" style="height: 100%;">
                 <div class="msg-system text-sm leading-tight"><span class="text-green-500">[SYSTEM]</span> Connecting to server IRCD-0.88...</div>
                 <div class="msg-system text-sm leading-tight"><span class="text-green-500">[SYSTEM]</span> Authenticating with custom token...</div>
             </div>
 
-            <!-- User List (Right Sidebar) -->
             <div class="w-1/4 min-w-[150px] pl-1 pt-1 border-l border-green-500 flex flex-col overflow-hidden">
                 
-                <!-- Users in Channel -->
                 <div class="text-sm font-bold pb-1 text-green-500 border-b border-green-500 leading-tight">Users in Channel</div>
                 <div id="user-list" class="terminal-scroll overflow-y-auto pt-1 text-sm leading-tight h-1/3 min-h-[50px] max-h-[150px]">
-                    <!-- Users will be populated here -->
                 </div>
 
-                <!-- Friends List -->
                 <div class="text-sm font-bold pt-2 pb-1 text-green-500 border-t border-green-500 leading-tight">Friends</div>
                 <div id="friend-list" class="terminal-scroll overflow-y-auto pt-1 text-sm leading-tight h-1/3 min-h-[50px] max-h-[150px]">
-                    <!-- Friends will be populated here -->
                 </div>
 
-                <!-- Pending Requests -->
                 <div class="text-sm font-bold pt-2 pb-1 text-green-500 border-t border-green-500 leading-tight">Requests (<span id="request-count">0</span>)</div>
                 <div id="request-list" class="terminal-scroll overflow-y-auto pt-1 text-sm leading-tight flex-grow">
-                    <!-- Requests will be populated here -->
                 </div>
             </div>
         </div>
 
-        <!-- Status and Input Bar (Bottom Bar) -->
         <div id="status-bar" class="w-full h-8 flex items-center text-sm px-1 leading-tight">
             
-            <!-- Settings Button (NEW) -->
-            <button id="settings-btn" onclick="openSettingsModal()" class="text-green-500 pr-3 whitespace-nowrap min-w-[15%] h-full flex items-center justify-center border-r border-green-500 hover:text-white transition-colors">
+            <button id="settings-btn" class="text-green-500 pr-3 whitespace-nowrap min-w-[15%] h-full flex items-center justify-center border-r border-green-500 hover:text-white transition-colors">
                 [SETTINGS]
             </button>
 
-            <!-- Status Text Area -->
             <div id="status-text" class="text-green-500 pr-3 whitespace-nowrap min-w-[20%] border-r border-green-500 h-full flex items-center justify-center">
-                <!-- Status populated by JS: 1:#CHANNEL (X users) -->
             </div>
             
-            <!-- Input Area -->
             <div id="input-container" class="flex flex-grow items-center h-full pl-3">
                 <span id="input-prefix-nick" class="text-green-500 pr-1">***</span>
                 <input type="text" id="input-prompt" placeholder="Type message or /command" maxlength="255">
@@ -1030,11 +979,11 @@
         
     </div>
     
-    <!-- SETTINGS MODAL (NEW) -->
     <div id="settings-modal" class="modal-backdrop hidden">
         <div class="modal-content">
-            <h2 class="text-xl font-bold text-green-500 mb-4">USER SETTINGS</h2>
+            <h2 class="text-xl font-bold text-green-500 mb-4">USER SETTINGS & AUTHENTICATION</h2>
 
+            <!-- Nickname & Color Settings -->
             <div class="mb-4">
                 <label for="settings-nick-input" class="block text-cyan-400 mb-1">Nickname:</label>
                 <input type="text" id="settings-nick-input" maxlength="15" class="w-full bg-black border border-green-500 text-white p-1 focus:outline-none focus:ring-0">
@@ -1043,19 +992,43 @@
             <div class="mb-4">
                 <label class="block text-cyan-400 mb-1">Name Color:</label>
                 <div id="settings-color-picker" class="flex flex-wrap">
-                    <!-- Color buttons populated by JS -->
                 </div>
                 <input type="hidden" id="settings-selected-color">
             </div>
             
-            <div class="mb-4 pt-2 border-t border-green-500">
-                <div class="text-xs text-yellow-400">Auth Status: <span id="auth-status-text">Connecting...</span></div>
+            <div class="mb-4 pt-4 border-t border-green-500">
+                <div class="text-xs text-yellow-400 mb-2">Auth Status: <span id="auth-status-text">Connecting...</span></div>
+
+                <!-- Email/Password Inputs -->
+                <label for="settings-email-input" class="block text-cyan-400 mb-1 text-xs">Email:</label>
+                <input type="email" id="settings-email-input" class="w-full bg-black border border-green-500 text-white p-1 mb-2 text-sm focus:outline-none focus:ring-0" placeholder="user@example.com">
+                
+                <label for="settings-password-input" class="block text-cyan-400 mb-1 text-xs">Password:</label>
+                <input type="password" id="settings-password-input" class="w-full bg-black border border-green-500 text-white p-1 mb-2 text-sm focus:outline-none focus:ring-0" placeholder="Minimum 6 characters">
+
+                <!-- Email/Password Buttons -->
+                <div class="flex space-x-2 mb-4">
+                    <button id="email-sign-up-btn" class="w-1/2 bg-cyan-700 text-white py-1 px-2 border border-cyan-700 hover:bg-black hover:text-cyan-500 transition-colors text-xs">
+                        CREATE ACCOUNT
+                    </button>
+                    <button id="email-sign-in-btn" class="w-1/2 bg-cyan-700 text-white py-1 px-2 border border-cyan-700 hover:bg-black hover:text-cyan-500 transition-colors text-xs">
+                        SIGN IN
+                    </button>
+                </div>
+                
+                <!-- Google Sign In -->
+                <div class="flex items-center my-3">
+                    <div class="flex-grow border-t border-gray-700"></div>
+                    <span class="flex-shrink mx-4 text-gray-500 text-xs">OR</span>
+                    <div class="flex-grow border-t border-gray-700"></div>
+                </div>
+
                 <button id="google-sign-in-btn" class="mt-2 w-full bg-blue-700 text-white py-1 px-4 border border-blue-700 hover:bg-black hover:text-blue-500 transition-colors">
                     SIGN IN WITH GOOGLE
                 </button>
             </div>
 
-            <div class="flex justify-between items-center pt-2">
+            <div class="flex justify-between items-center pt-2 border-t border-green-500">
                 <button id="save-settings-btn" class="bg-green-500 text-black py-1 px-4 border border-green-500 hover:bg-black hover:text-green-500 transition-colors">
                     SAVE
                 </button>
@@ -1069,7 +1042,6 @@
         </div>
     </div>
     
-    <!-- PROFILE MODAL (NEW) -->
     <div id="profile-modal" class="modal-backdrop hidden">
         <div class="modal-content">
             <h2 class="text-xl font-bold text-green-500 mb-4">USER PROFILE</h2>
