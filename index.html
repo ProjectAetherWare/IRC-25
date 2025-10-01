@@ -133,6 +133,10 @@
         let userUnsubscribe = null;
         let friendUnsubscribe = null;
         
+        // Array to store messages that have been optimistically displayed locally 
+        // but haven't been confirmed by the Firestore listener yet.
+        let optimisticMessages = []; 
+        
         const DEFAULT_CHANNEL = "#GENERAL";
         const MAX_NICK_LENGTH = 15;
         const NICK_TIMEOUT_MS = 60000;
@@ -155,7 +159,7 @@
             measurementId: "G-58H16BXM67"
         };
         const appId = firebaseConfig.projectId; // Use projectId as the consistent app ID
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // Note: __initial_auth_token is now checked directly in initFirebase
         // --- END: Firebase Configuration (Provided by User) ---
 
         function getFormattedTime(timeMs) {
@@ -269,34 +273,28 @@
                 auth = getAuth(app);
                 
                 setLogLevel('Debug');
+                
+                let user;
+                
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    // 1. Use custom token if available
+                    const cred = await signInWithCustomToken(auth, __initial_auth_token);
+                    user = cred.user;
+                    logSystemMessage("Authenticated successfully using secure token.", 'system');
+                } else {
+                    // 2. Fallback to anonymous sign-in
+                    const cred = await signInAnonymously(auth);
+                    user = cred.user;
+                    logSystemMessage("Signed in as Guest (Anonymous Auth).", 'system');
+                }
+                
+                if (user) {
+                    currentUserId = user.uid;
+                    await initializeUser(user.uid);
+                } else {
+                    logSystemMessage("Failed to retrieve user after sign-in.", 'error');
+                }
 
-                await new Promise((resolve, reject) => {
-                    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-                        unsubscribe();
-                        if (user) {
-                            currentUserId = user.uid;
-                            await initializeUser(user.uid); 
-                            resolve();
-                        } else {
-                            try {
-                                if (initialAuthToken) {
-                                    const cred = await signInWithCustomToken(auth, initialAuthToken);
-                                    currentUserId = cred.user.uid;
-                                    logSystemMessage("Authenticated successfully using secure token.", 'system');
-                                } else {
-                                    const cred = await signInAnonymously(auth);
-                                    currentUserId = cred.user.uid;
-                                    logSystemMessage("Signed in as Guest (Anonymous Auth).", 'system');
-                                }
-                                await initializeUser(currentUserId);
-                                resolve();
-                            } catch (e) {
-                                logSystemMessage(`Authentication failed: ${e.message}`, 'error');
-                                reject(e);
-                            }
-                        }
-                    });
-                });
             } catch (error) {
                 logSystemMessage(`Firebase initialization error: ${error.message}`, 'error');
                 console.error("Firebase init error:", error);
@@ -437,19 +435,29 @@
             }
             
             const censoredText = censorText(text);
+            const localTime = getTime(); // Capture local time for immediate display and DB
+
+            const messageData = {
+                time: localTime,
+                channel: currentChannel,
+                nick: currentNick,
+                userId: currentUserId,
+                text: censoredText, 
+                type: type, 
+            };
+            
+            // 1. Optimistically render the message locally for immediate user feedback
+            // We use a temporary property to identify this message later
+            const tempId = localTime + '-' + currentUserId;
+            renderMessage({ ...messageData, isOptimistic: true, tempId: tempId }); 
+            optimisticMessages.push(tempId); // Add tempId to the list of pending optimistic messages
 
             await updateUserPresence();
             await updateChannelActivity(currentChannel);
 
+            // 2. Send the message to Firestore
             try {
-                await addDoc(getMessagesCollectionRef(), {
-                    time: getTime(),
-                    channel: currentChannel,
-                    nick: currentNick,
-                    userId: currentUserId,
-                    text: censoredText, 
-                    type: type, 
-                });
+                await addDoc(getMessagesCollectionRef(), messageData);
             } catch (e) {
                 console.error("Error sending message: ", e);
                 logSystemMessage("Failed to send message.", 'error');
@@ -548,29 +556,51 @@
             });
         }
 
-
+        // --- FIX IS HERE ---
         function listenForMessages(channel) {
             if (!db) return;
 
             const q = query(
                 getMessagesCollectionRef(), 
-                where('channel', '==', channel), 
-                orderBy('time', 'asc')
+                where('channel', '==', channel) // Removed orderBy('time', 'asc') to fix index failure
             );
             
             return onSnapshot(q, (snapshot) => {
                 const log = document.getElementById('chat-log');
+                const messages = [];
                 
-                snapshot.docChanges().forEach((change) => {
-                    if (change.type === "added") {
-                        const data = change.doc.data();
-                        renderMessage(data);
-                    }
+                // 1. Process all documents, not just 'added' changes, for reliability
+                snapshot.docs.forEach((doc) => {
+                    const data = doc.data();
+                    // We also get the Firestore ID to help with optimistic message cleanup
+                    messages.push({...data, id: doc.id}); 
                 });
                 
+                // 2. Sort all received messages by time locally
+                messages.sort((a, b) => a.time - b.time);
+
+                // 3. Clear the log and redraw all messages (including optimistic ones that might be confirmed)
+                log.innerHTML = '';
+                
+                // Keep track of confirmed optimistic messages
+                const confirmedOptimistic = new Set();
+                
+                messages.forEach(data => {
+                    renderMessage(data); 
+                    
+                    // The optimistic message has been successfully confirmed by the database, 
+                    // so we can clear its temporary reference.
+                    confirmedOptimistic.add(data.time + '-' + data.userId);
+                });
+                
+                // 4. Clean up the optimistic messages array
+                optimisticMessages = optimisticMessages.filter(tempId => !confirmedOptimistic.has(tempId));
+                
+                // 5. Scroll to the bottom
                 log.scrollTop = log.scrollHeight;
             });
         }
+        // --- END OF FIX ---
 
         function listenForUsers(channel) {
             if (!db) return;
@@ -627,13 +657,28 @@
 
         function renderMessage(data) {
             const log = document.getElementById('chat-log');
+            
             const time = getFormattedTime(data.time);
             
             const userData = nickToIdMap[data.userId] || { color: getNickColorClass(data.userId) };
             const nickColorClass = userData.color;
             let messageHtml = '';
+            
+            // Determine if this is an optimistic message that has not yet been confirmed by the DB
+            // We use the time + userId as a temporary unique identifier for optimistic checks
+            const tempId = data.time + '-' + data.userId;
+            const isOptimistic = data.isOptimistic === true || optimisticMessages.includes(tempId);
+            
+            // If the message has already been confirmed by the database (i.e., it came from the onSnapshot listener),
+            // and its tempId is not in the optimisticMessages list, we render it normally.
 
             if (data.type === 'message') {
+                // If this is the DB-confirmed message for a message we previously sent
+                if (data.userId === currentUserId && isOptimistic) {
+                    // This is the confirmed message. We render it normally and let the optimistic clean-up happen in listenForMessages
+                    // However, since we redraw the whole log, we don't need the opacity class here anymore.
+                }
+
                 messageHtml = `<div class="msg-user text-sm leading-tight"><span class="text-green-500">[${time}]</span> <span class="${nickColorClass}">${data.nick}</span>: ${data.text}</div>`;
             } else if (data.type === 'action') {
                 messageHtml = `<div class="msg-action text-sm leading-tight"><span class="text-green-500">[${time}]</span> * ${data.nick} ${data.text}</div>`;
@@ -665,7 +710,7 @@
         window.selectColor = function(colorClass) {
             document.querySelectorAll('#settings-color-picker .color-option').forEach(btn => {
                 btn.classList.remove('border-4');
-                if (btn.dataset.colorClass === colorClass) { 
+                if (btn.dataset.color-class === colorClass) { // Fixed typo: data-color-class
                     btn.classList.add('border-4');
                 }
             });
